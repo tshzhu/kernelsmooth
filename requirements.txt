@@ -1,0 +1,6 @@
+# Runtime dependencies for a source checkout.
+numpy
+scipy
+Cython
+setuptools>=61
+wheel

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "Cython", "numpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kernelsmooth"
+version = "0.1.0"
+description = "Kernel density estimation and kernel regression models"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "cython",
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["kernelsmooth*"]
+exclude = ["__pycache__", "*.pyc"]
+namespaces = false
