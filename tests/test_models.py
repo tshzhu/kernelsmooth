@@ -31,6 +31,29 @@ def test_kr_shapes_and_finite_values():
     assert np.all(np.isfinite(gradients))
 
 
+def test_boke_compatibility_contract():
+    X, y, query = _data()
+    model = KernelRegression(bandwidth=0.7).fit(X, y)
+
+    mean = model.predict(query)
+    mean_dens, density = model.predict(query, return_dens=True)
+    mean_grad, gradient = model.predict(query, return_grad=True)
+    mean_all, gradient_all, density_all, density_gradient_all = model.predict(
+        query,
+        return_dens=True,
+        return_grad=True,
+    )
+
+    assert model.bandwidth.shape == (X.shape[1],)
+    assert model.Y.shape == (X.shape[0],)
+    assert model.pdf(query).shape == (len(query),)
+    assert model.whiten_inverse_transform(np.zeros_like(query)).shape == query.shape
+    assert mean.shape == (len(query),)
+    assert mean_dens.shape == mean.shape == mean_grad.shape == mean_all.shape
+    assert density.shape == density_all.shape == (len(query),)
+    assert gradient.shape == gradient_all.shape == density_gradient_all.shape == query.shape
+
+
 def test_accelerated_and_numpy_models_agree():
     X, y, query = _data()
     kde = KernelDensity(bandwidth=0.7).fit(X)
