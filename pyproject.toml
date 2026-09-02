@@ -37,9 +37,9 @@ dev = [
 
 [tool.cibuildwheel]
 # Build CPython wheels for every interpreter supported by requires-python.
-# PyPy and musllinux are skipped because the package depends on the
-# NumPy/SciPy CPython binary ecosystem and ships Cython extensions.
-skip = ["pp*", "*-musllinux_*"]
+# PyPy, musllinux, and 32-bit Windows are skipped because the package depends
+# on the NumPy/SciPy CPython binary ecosystem and ships Cython extensions.
+skip = ["*-musllinux_*", "*-win32"]
 test-requires = ["pytest>=7"]
 test-command = "python -m pytest {project}/tests"
 build-verbosity = 1
