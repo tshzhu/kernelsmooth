@@ -1,3 +1,5 @@
+"""Cython-accelerated Gaussian kernel density estimation."""
+
 import numpy as np
 from scipy.linalg import cholesky, solve_triangular
 
@@ -8,12 +10,12 @@ INV_SQRT_2PI = 1.0 / np.sqrt(2.0 * np.pi)
 
 
 class KernelDensity:
-    # Gaussian Kernel Density Estimation
+    """Gaussian KDE with covariance whitening and analytic gradients."""
 
     __slots__ = (
-        'bandwidth', 'method', 'scale', 'X', 'normalizer', # Basic attributes
-        'diag_cov', 'L', # For whitening
-        'X_scaled', 'inv_bw', # Cached for prediction
+        'bandwidth', 'method', 'scale', 'X', 'normalizer', # Fitted model state
+        'diag_cov', 'L', # Whitening mode and linear transform
+        'X_scaled', 'inv_bw', # Prediction-time cache
     )
 
     def __init__(self, bandwidth='mlcv', diag_cov=False):
@@ -36,6 +38,12 @@ class KernelDensity:
         self.diag_cov = diag_cov
 
     def set_bandwidth(self, bandwidth):
+        """Configure a fixed bandwidth or an automatic selection method.
+
+        Parsing uses temporary variables so a rejected update does not corrupt
+        the configuration of an existing estimator.
+        """
+
         fixed_bandwidth = None
         method = None
         scale = 1.0
@@ -62,25 +70,29 @@ class KernelDensity:
         self.scale = scale
 
     def fit(self, X):
-        # X shape: (n, d)
-        self.X = self.whiten_fit_transform(X) # fit self.X and self.L
+        """Fit the whitening transform, select bandwidths, and cache data."""
 
-        # bandwidth shape: (d,)
+        # X and the stored training matrix both have shape (n, d).
+        self.X = self.whiten_fit_transform(X) # Also fits self.L.
+
+        # A scalar fixed bandwidth is expanded here once the dimension is known.
         self.bandwidth = self.get_bandwidth(self.X, self.method, self.scale)
 
-        # Cache for prediction
+        # Prediction repeatedly reuses bandwidth-scaled training coordinates.
         self._compute_cache()
 
         return self
 
     def get_bandwidth(self, X, method, scale=1.0):
+        """Resolve a bandwidth specification for data with shape ``(n, d)``."""
+
         match method:
             case 'scott': return bw_scott(X, scale)
             case 'silverman': return bw_silverman(X, scale)
             case 'median': return bw_median(X, scale)
             case 'mlcv': return bw_mlcv(X)
 
-            case None: # Use self.bandwidth directly
+            case None: # Use the fixed bandwidth configured by set_bandwidth.
                 bw = self.bandwidth
                 dim = X.shape[1]
 
@@ -119,7 +131,8 @@ class KernelDensity:
             >>> dens, dens_grad = model.predict(X, return_grad=True)
         """
 
-        # X shape: (m, d)
+        # Transform once in Python; the O(m*n*d) kernel accumulation runs in
+        # Cython without materializing the complete pairwise kernel matrix.
         X = self.whiten_transform(X)
         X_scaled = X * self.inv_bw
 
@@ -131,12 +144,15 @@ class KernelDensity:
                 dens *= self.normalizer
             return dens
 
-        # dens_grad shape: (m, d)
+        # The Cython routine returns sum(K) and sum(K * x_i / h).  Combining
+        # those moments produces d sum(K) / d x in whitened coordinates.
         dens, dens_grad = _get_kde_grad(X_scaled, self.X_scaled)
         X_scaled *= dens[:, None]
         dens_grad -= X_scaled
         dens_grad *= self.inv_bw
 
+        # Apply the chain rule through the whitening map so public gradients
+        # are always expressed in the original input coordinates.
         if self.diag_cov:
             dens_grad /= self.L
         else:
@@ -148,6 +164,13 @@ class KernelDensity:
         return dens, dens_grad
 
     def whiten_fit_transform(self, X):
+        """Fit the covariance transform and return whitened coordinates.
+
+        Only the linear transform is applied to coordinates.  This is
+        sufficient because Gaussian kernels depend on pairwise differences,
+        and it keeps ``whiten_inverse_transform`` meaningful for offsets.
+        """
+
         X = np.atleast_2d(X).astype(np.float64)
         n, dim = X.shape
 
@@ -155,24 +178,26 @@ class KernelDensity:
             raise ValueError("X must contain at least 2 samples")
 
         if self.diag_cov:
-            # std = L
-            # X_whiten = X / L
+            # Diagonal whitening: X_white = X / per-feature sample std.
             self.L = np.std(X, axis=0, ddof=1)
             return X / self.L
         else:
+            # Centering is used to estimate covariance, not stored coordinates;
+            # the common translation cancels from every kernel difference.
             mean = np.mean(X, axis=0)
             X_centered = X - mean
             cov = X_centered.T @ X_centered / (n - 1)
 
             cov.flat[::dim + 1] += EPS  # Avoid singular covariance
 
-            # cov = L @ L^T
-            # X_whiten = X @ L^(-T)
-            # Use `overwrite_a=True` to inplace modify `cov`
+            # cov = L @ L.T and X_white = solve(L, X.T).T.
+            # ``overwrite_a`` lets SciPy reuse the temporary covariance buffer.
             self.L = cholesky(cov.T, lower=True, check_finite=False, overwrite_a=True)
             return solve_triangular(self.L, X.T, lower=True, check_finite=False).T
 
     def whiten_transform(self, X):
+        """Apply the fitted linear whitening transform to query points."""
+
         X = np.atleast_2d(X).astype(np.float64)
 
         if self.diag_cov:
@@ -181,6 +206,8 @@ class KernelDensity:
             return solve_triangular(self.L, X.T, lower=True, check_finite=False).T
 
     def whiten_inverse_transform(self, Z):
+        """Map whitened offsets back to offsets in the original coordinates."""
+
         Z = np.atleast_2d(Z).astype(np.float64)
 
         if self.diag_cov:
@@ -189,13 +216,15 @@ class KernelDensity:
             return Z @ self.L.T
 
     def _compute_cache(self):
+        """Cache scaled training coordinates and the normalized KDE factor."""
+
         n, dim = self.X.shape
 
         self.inv_bw = (1.0 / self.bandwidth)[None, :]
         self.X_scaled = self.X * self.inv_bw
 
-        # Normalization factor for PDF
-        # 1/n * (2 * pi)^(-d/2) * det(H)^(-1/2)
+        # 1/n * (2*pi)^(-d/2) * prod(1/h) / det(L) converts the
+        # unnormalized Gaussian sum back to density in original coordinates.
         if self.diag_cov:
             det_L = np.prod(self.L)
         else:
@@ -213,6 +242,7 @@ def bw_mlcv(X):
     Maximum-Likelihood Cross Validation
     """
     def loss(log_h):
+        # Optimize in log space; _get_kde_loo omits each point's self-kernel.
         h = np.exp(log_h)
         dens = _get_kde_loo(X, h)
 

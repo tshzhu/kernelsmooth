@@ -1,3 +1,5 @@
+"""Cython-accelerated Gaussian Nadaraya--Watson regression."""
+
 import numpy as np
 from scipy.linalg import solve_triangular
 
@@ -7,7 +9,7 @@ from .tools import _gaussian, bw_silverman, optimize_bw
 
 
 class KernelRegression(KernelDensity):
-    # Gaussian Nadaraya-Watson Kernel Regression
+    """Nadaraya--Watson regression with analytic mean and density gradients."""
 
     __slots__ = ('Y',)
 
@@ -30,29 +32,34 @@ class KernelRegression(KernelDensity):
         super().__init__(bandwidth=bandwidth, diag_cov=diag_cov)
 
     def fit(self, X, Y):
+        """Fit whitening and bandwidth state for predictors ``X`` and targets ``Y``."""
+
         X = np.atleast_2d(X)
         Y = np.ravel(Y)
 
+        # Validate before whitening or entering pointer-based Cython kernels.
         if Y.shape[0] != X.shape[0]:
             raise ValueError(
                 f"X and Y have incompatible sample counts: {X.shape[0]} and {Y.shape[0]}"
             )
 
-        # X shape: (n, d)
-        self.X = self.whiten_fit_transform(X) # fit self.X and self.L
+        # Store whitened predictors with shape (n, d).
+        self.X = self.whiten_fit_transform(X) # Also fits self.L.
 
-        # Y shape: (n,)
+        # Contiguous float64 targets match the Cython memoryview contract.
         self.Y = Y.astype(np.float64)
 
-        # bandwidth shape: (d,)
+        # Regression criteria may depend on both predictors and responses.
         self.bandwidth = self.get_bandwidth(self.X, self.Y, self.method, self.scale)
 
-        # Cache for prediction
+        # Reuse the KDE cache because both estimators share the same kernel.
         self._compute_cache()
 
         return self
 
     def get_bandwidth(self, X, Y, method, scale=1.0):
+        """Resolve a regression-specific or inherited KDE bandwidth method."""
+
         match method:
             case 'lscv': return bw_lscv(X, Y)
             case 'gcv': return bw_gcv(X, Y)
@@ -95,22 +102,24 @@ class KernelRegression(KernelDensity):
             >>> mean, mean_grad, dens, dens_grad = model.predict(X, return_dens=True, return_grad=True)
         """
 
-        # X shape: (m, d)
+        # Apply whitening and bandwidth scaling once before entering Cython.
         X = self.whiten_transform(X)
         X_scaled = X * self.inv_bw
 
         if not return_grad:
+            # Distances are shifted by their per-query minimum in Cython.  The
+            # common factor cancels from the Nadaraya--Watson ratio.
             sum_w, sum_wy, min_d2 = _get_kr(
                 X_scaled, self.X_scaled, self.Y,
             )
 
-            # mean shape: (m,)
+            # Nadaraya--Watson mean = sum(K*y) / sum(K).
             mean = sum_wy / sum_w
 
             if not return_dens:
                 return mean
 
-            # dens shape: (m,)
+            # Restore the common Gaussian factor only when density is requested.
             shift_factor = _gaussian(min_d2)
             dens = sum_w * shift_factor
 
@@ -122,14 +131,16 @@ class KernelRegression(KernelDensity):
             X_scaled, self.X_scaled, self.Y,
         )
 
-        # mean shape: (m,)
+        # Gradient mode additionally returns first moments sum(K*x_i/h) and
+        # sum(K*y_i*x_i/h), which are sufficient for both public gradients.
         mean = sum_wy / sum_w
 
-        # mean_grad shape: (m, d)
+        # Differentiate the weighted ratio in bandwidth-scaled coordinates.
         mean_grad = sum_wyx
         mean_grad -= mean[:, None] * sum_wx
         mean_grad *= self.inv_bw / sum_w[:, None]
 
+        # Map gradients through the whitening transform to original inputs.
         if self.diag_cov:
             mean_grad /= self.L
         else:
@@ -138,7 +149,7 @@ class KernelRegression(KernelDensity):
         output = [mean, mean_grad]
 
         if return_dens:
-            # dens shape: (m,)
+            # Density uses the same Gaussian kernel sum as inherited KDE.
             shift_factor = _gaussian(min_d2)
             dens = sum_w * shift_factor
 
@@ -173,6 +184,8 @@ def bw_lscv(X, Y):
     Least-Squares Cross Validation
     """
     def loss(log_h):
+        # The diagonal smoother weights are used to convert fitted residuals
+        # into leave-one-out residuals without refitting n separate models.
         h = np.exp(log_h)
         mean, inv_dens = _get_kr_loo(X, Y, h)
 
@@ -189,6 +202,7 @@ def bw_gcv(X, Y):
     GCV: MSE / (1 - tr(W)/n)^2
     """
     def loss(log_h):
+        # Average diagonal weight equals tr(W)/n for the linear smoother.
         h = np.exp(log_h)
         mean, inv_dens = _get_kr_loo(X, Y, h)
         avg_inv_dens = inv_dens.mean()
@@ -209,6 +223,7 @@ def bw_aicc(X, Y):
     n = len(Y)
 
     def loss(log_h):
+        # sum(inv_dens) is the effective degrees of freedom tr(W).
         h = np.exp(log_h)
         mean, inv_dens = _get_kr_loo(X, Y, h)
         sum_inv_dens = inv_dens.sum()
