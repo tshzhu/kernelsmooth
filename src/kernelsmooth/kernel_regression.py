@@ -30,11 +30,19 @@ class KernelRegression(KernelDensity):
         super().__init__(bandwidth=bandwidth, diag_cov=diag_cov)
 
     def fit(self, X, Y):
+        X = np.atleast_2d(X)
+        Y = np.ravel(Y)
+
+        if Y.shape[0] != X.shape[0]:
+            raise ValueError(
+                f"X and Y have incompatible sample counts: {X.shape[0]} and {Y.shape[0]}"
+            )
+
         # X shape: (n, d)
         self.X = self.whiten_fit_transform(X) # fit self.X and self.L
 
         # Y shape: (n,)
-        self.Y = np.ravel(Y).astype(np.float64)
+        self.Y = Y.astype(np.float64)
 
         # bandwidth shape: (d,)
         self.bandwidth = self.get_bandwidth(self.X, self.Y, self.method, self.scale)

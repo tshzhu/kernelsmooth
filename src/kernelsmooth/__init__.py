@@ -1,13 +1,15 @@
-"""Kernel density and Nadaraya--Watson regression models."""
+"""Kernel density and local kernel regression models."""
 
 from .kernel_density import KernelDensity
 from .kernel_regression import KernelRegression
-from ._numpy.kernel_density import KernelDensity as KernelDensity_np
-from ._numpy.kernel_regression import KernelRegression as KernelRegression_np
+from .local_linear_regression import LocalLinearRegression
+
+# Descriptive alias for the Gaussian Nadaraya--Watson estimator.
+NadarayaWatsonRegression = KernelRegression
 
 __all__ = [
     "KernelDensity",
     "KernelRegression",
-    "KernelDensity_np",
-    "KernelRegression_np",
+    "NadarayaWatsonRegression",
+    "LocalLinearRegression",
 ]

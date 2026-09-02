@@ -36,21 +36,30 @@ class KernelDensity:
         self.diag_cov = diag_cov
 
     def set_bandwidth(self, bandwidth):
-        self.bandwidth = None
-        self.method = None # Only available for adaptive methods
-        self.scale = 1.0 # Only available for rule-of-thumb methods
+        fixed_bandwidth = None
+        method = None
+        scale = 1.0
 
         try:
             match bandwidth:
                 case str(method):
-                    self.method = method
+                    pass
                 case [str(method), scale]:
-                    self.method = method
-                    self.scale = np.asarray(scale, dtype=np.float64).ravel().squeeze()
+                    scale = np.asarray(scale, dtype=np.float64).ravel().squeeze()
                 case _: # Fixed bandwidth (unknown dimension)
-                    self.bandwidth = np.asarray(bandwidth, dtype=np.float64).ravel().squeeze()
+                    fixed_bandwidth = np.asarray(bandwidth, dtype=np.float64).ravel().squeeze()
         except (ValueError, TypeError):
             raise ValueError(f"Invalid bandwidth format: {bandwidth}")
+
+        if fixed_bandwidth is not None:
+            if not np.all(np.isfinite(fixed_bandwidth)):
+                raise ValueError("Fixed bandwidth values must be finite")
+            if not np.all(fixed_bandwidth > 0.0):
+                raise ValueError("Fixed bandwidth values must be strictly positive")
+
+        self.bandwidth = fixed_bandwidth
+        self.method = method
+        self.scale = scale
 
     def fit(self, X):
         # X shape: (n, d)
@@ -141,6 +150,9 @@ class KernelDensity:
     def whiten_fit_transform(self, X):
         X = np.atleast_2d(X).astype(np.float64)
         n, dim = X.shape
+
+        if n < 2:
+            raise ValueError("X must contain at least 2 samples")
 
         if self.diag_cov:
             # std = L

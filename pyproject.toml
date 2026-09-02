@@ -1,22 +1,48 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "Cython", "numpy"]
+requires = ["setuptools>=61", "wheel", "Cython>=3.0", "numpy>=1.21"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "kernelsmooth"
 version = "0.1.0"
-description = "Kernel density estimation and kernel regression models"
-requires-python = ">=3.12,<3.13"
+description = "Fast Gaussian kernel density, Nadaraya-Watson, and local-linear regression"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Tansheng Zhu" }]
+keywords = ["kernel smoothing", "KDE", "Nadaraya-Watson", "local-linear regression"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+]
+requires-python = ">=3.10"
 dependencies = [
-    "numpy",
-    "scipy",
+    "numpy>=1.21",
+    "scipy>=1.7",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "cython",
-    "pytest",
+    "Cython>=3.0",
+    "pytest>=7",
 ]
+
+[tool.cibuildwheel]
+# Build CPython wheels for every interpreter supported by requires-python.
+# PyPy and musllinux are skipped because the package depends on the
+# NumPy/SciPy CPython binary ecosystem and ships Cython extensions.
+skip = ["pp*", "*-musllinux_*"]
+test-requires = ["pytest>=7"]
+test-command = "python -m pytest {project}/tests"
+build-verbosity = 1
 
 [tool.setuptools.packages.find]
 where = ["src"]

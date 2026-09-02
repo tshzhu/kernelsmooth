@@ -12,6 +12,7 @@ dist/
 *.o
 src/kernelsmooth/_kernel_density.c
 src/kernelsmooth/_kernel_regression.c
+src/kernelsmooth/_local_linear_regression.c
 
 # Local agent/workspace notes
 *.md

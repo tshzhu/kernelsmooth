@@ -1,18 +1,10 @@
-import sys
-
 import numpy
 from Cython.Build import cythonize
 from setuptools import Extension, find_packages, setup
 
 
-if sys.platform == "win32":
-    compile_args = ["/O2", "/fp:fast"]
-else:
-    compile_args = ["-O3", "-march=native", "-ffast-math"]
-
 common_args = {
     "include_dirs": [numpy.get_include()],
-    "extra_compile_args": compile_args,
     "define_macros": [("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
 }
 
@@ -25,6 +17,11 @@ extensions = [
     Extension(
         name="kernelsmooth._kernel_regression",
         sources=["src/kernelsmooth/_kernel_regression.pyx"],
+        **common_args,
+    ),
+    Extension(
+        name="kernelsmooth._local_linear_regression",
+        sources=["src/kernelsmooth/_local_linear_regression.pyx"],
         **common_args,
     ),
 ]
@@ -42,5 +39,6 @@ setup(
             "initializedcheck": False,
             "nonecheck": False,
         },
+        annotate=False,
     ),
 )
