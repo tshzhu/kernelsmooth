@@ -94,7 +94,7 @@ def test_regression_fit_requires_matching_sample_counts(model_class):
         model.fit(X, np.zeros(4))
 
 
-def test_boke_compatibility_contract():
+def test_kernel_regression_interface_and_fitted_state():
     X, y, query = _data()
     model = KernelRegression(bandwidth=0.7).fit(X, y)
 

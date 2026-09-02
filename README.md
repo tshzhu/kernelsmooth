@@ -1,226 +1,163 @@
 # kernelsmooth
 
-`kernelsmooth` provides fast Gaussian kernel smoothers for NumPy arrays. The
-core summations are implemented in Cython and the public estimators expose
-both values and useful derivatives:
+Fast Gaussian kernel smoothers for NumPy arrays. The package provides
+Cython-accelerated kernel sums and analytic derivatives for density estimation
+and nonparametric regression.
 
-- Gaussian kernel density estimation (KDE)
-- Nadaraya--Watson regression (NWR), also named `KernelRegression`
-- Gaussian local-linear regression (LLR)
-- Density gradients and analytic local-linear prediction gradients
-- Diagonal or full-covariance whitening
+- Gaussian kernel density estimation (`KernelDensity`)
+- Nadaraya--Watson regression (`KernelRegression`, also
+  `NadarayaWatsonRegression`)
+- Gaussian local-linear regression (`LocalLinearRegression`)
+- Full or diagonal covariance whitening
 - Fixed, rule-of-thumb, and cross-validated bandwidth selection
 
-The package is independent of BOKE and can be installed and used on its own.
-
 ## Installation
-
-Install the pre-built wheel selected for your platform and Python version:
 
 ```bash
 python -m pip install kernelsmooth
 ```
 
-The package currently targets Python 3.10 or newer. Wheels are built by the
-GitHub Actions workflow for CPython on Linux, macOS, and Windows. If a wheel is
-not available for a particular platform, installing from source requires a C
-compiler, NumPy headers, and Cython (the build requirements declared in
-`pyproject.toml`).
+The package supports Python 3.10 and newer. Wheels are built for CPython on
+Linux, macOS, and Windows. A source install requires a C compiler, NumPy
+headers, and Cython.
 
 ## Quick start
 
 ```python
 import numpy as np
-
-from kernelsmooth import (
-    KernelDensity,
-    KernelRegression,
-    LocalLinearRegression,
-    NadarayaWatsonRegression,
-)
+from kernelsmooth import KernelDensity, NadarayaWatsonRegression
 
 rng = np.random.default_rng(0)
 X = rng.normal(size=(100, 2))
 y = np.sin(X[:, 0]) + 0.25 * X[:, 1]
-query = np.zeros((8, 2))
+X_new = np.zeros((8, 2))
 
-# KDE: density values and gradients in the original coordinates.
-kde = KernelDensity(bandwidth="silverman").fit(X)
-density, density_grad = kde.pdf(query, normalize=True, return_grad=True)
+kde = KernelDensity("silverman").fit(X)
+density, density_grad = kde.pdf(X_new, normalize=True, return_grad=True)
 
-# Nadaraya--Watson regression. The descriptive alias is the same class.
-nwr = NadarayaWatsonRegression(bandwidth="silverman").fit(X, y)
-mean, mean_grad, density, density_grad = nwr.predict(
-    query,
-    return_dens=True,
-    normalize=True,
-    return_grad=True,
-)
-
-# Local-linear regression. Its gradient output is the analytic derivative of
-# the predicted local intercept.
-llr = LocalLinearRegression(bandwidth="silverman").fit(X, y)
-mean, mean_grad = llr.predict(query, return_grad=True)
+nwr = NadarayaWatsonRegression("silverman").fit(X, y)
+mean, mean_grad = nwr.predict(X_new, return_grad=True)
 ```
 
-All estimators accept a one-dimensional query array for a single point; it is
-treated as shape `(1, d)`. For a batch of `m` points in `d` dimensions, query
-arrays should have shape `(m, d)`.
-
-Training data must contain at least two samples. Regression targets must have
-exactly one value per training sample (`len(y) == len(X)`). Fixed scalar and
-per-feature bandwidths must contain only finite, strictly positive values;
-invalid inputs raise `ValueError` before whitening or Cython evaluation.
+Training data use shape `(n, d)` and query points use shape `(m, d)`. A
+one-dimensional query is treated as one point. Training requires at least two
+samples; regression targets must satisfy `len(y) == len(X)`. Fixed bandwidths
+must be finite and strictly positive.
 
 ## Estimators
 
 ### Kernel density estimation
 
-For training points `x_j`, KDE evaluates the Gaussian kernel sum
+For training points (x_j), the unnormalized Gaussian kernel sum is
 
-```text
-K(x) = sum_j exp(-||x - x_j||² / 2)
-```
-
-The public method is:
+$$
+K(x) = \sum_{j=1}^{n} \exp\left(-\frac{1}{2}
+\left\|\frac{x-x_j}{h}\right\|^2\right).
+$$
 
 ```python
+from kernelsmooth import KernelDensity
+
 model = KernelDensity(bandwidth="mlcv", diag_cov=False).fit(X)
-density = model.pdf(query)
-density, density_grad = model.pdf(
-    query,
-    normalize=True,
-    return_grad=True,
-)
+density = model.pdf(X_new)
+density, density_grad = model.pdf(X_new, normalize=True, return_grad=True)
 ```
 
-`pdf` returns an unnormalized kernel sum by default. `normalize=True` applies
-the Gaussian, bandwidth, covariance, and `1/n` normalization factor. The
-gradient has shape `(m, d)` and is always with respect to the original input
-coordinates.
+`pdf` returns the kernel sum by default. `normalize=True` applies the Gaussian,
+bandwidth, covariance, and `1/n` normalization factor. The optional gradient
+has shape `(m, d)` and is expressed in the original coordinates.
 
 ### Nadaraya--Watson regression
 
-`KernelRegression` and `NadarayaWatsonRegression` are aliases for the same
-Gaussian NWR estimator:
+`KernelRegression` and `NadarayaWatsonRegression` are aliases. The estimator is
 
-```text
-m(x) = sum_j K(x, x_j) y_j / sum_j K(x, x_j)
-```
+$$
+\widehat m(x) =
+\frac{\sum_{j=1}^{n} K(x,x_j)y_j}
+{\sum_{j=1}^{n} K(x,x_j)}.
+$$
 
 ```python
-nwr = KernelRegression(bandwidth="lscv").fit(X, y)
+from kernelsmooth import KernelRegression
 
-mean = nwr.predict(query)
-mean, density = nwr.predict(query, return_dens=True)
-mean, mean_grad = nwr.predict(query, return_grad=True)
-mean, mean_grad, density, density_grad = nwr.predict(
-    query,
+model = KernelRegression("lscv").fit(X, y)
+mean = model.predict(X_new)
+mean, density = model.predict(X_new, return_dens=True)
+mean, mean_grad = model.predict(X_new, return_grad=True)
+mean, mean_grad, density, density_grad = model.predict(
+    X_new,
     return_dens=True,
     normalize=True,
     return_grad=True,
 )
 ```
 
-The return order is fixed. `normalize=True` affects only `density` and
-`density_grad`; the regression mean and its gradient are unchanged.
+The full return order is `(mean, mean_grad, density, density_grad)`. Normalizing
+the density does not change the regression mean or its gradient.
 
 ### Local-linear regression
 
-LLR fits a local affine model around each query point. For local offsets
-`u_j = x_j - x`, it solves the weighted system
+For local offsets (u_j=x_j-x), LLR fits an affine model by weighted least
+squares:
 
-```text
-argmin_(a, b) sum_j K(x, x_j) [y_j - a - bᵀ u_j]²
-```
+$$
+(\widehat a,\widehat b) = \arg\min_{a,b}
+\sum_{j=1}^{n} K(x,x_j)\left[y_j-a-b^\mathsf{T}u_j\right]^2.
+$$
 
-The intercept `a` is the local mean estimate and `b` is the local slope used
-internally to fit it. The same optional density and density-gradient outputs
-are available:
+The prediction is the local intercept (widehat\beta_0(x)=\widehat a). The
+optional `return_grad=True` output is the analytic derivative of this intercept
+with respect to the input coordinates; the internal slope coefficients are not
+returned.
 
 ```python
-llr = LocalLinearRegression(bandwidth="gcv").fit(X, y)
+from kernelsmooth import LocalLinearRegression
 
-mean = llr.predict(query)
-mean, mean_grad = llr.predict(query, return_grad=True)
-mean, density = llr.predict(query, return_dens=True)
-mean, mean_grad, density, density_grad = llr.predict(
-    query,
+model = LocalLinearRegression("gcv").fit(X, y)
+mean = model.predict(X_new)
+mean, mean_grad = model.predict(X_new, return_grad=True)
+mean, density = model.predict(X_new, return_dens=True)
+mean, mean_grad, density, density_grad = model.predict(
+    X_new,
     return_dens=True,
     normalize=True,
     return_grad=True,
 )
 ```
 
-For LLR, `return_grad=True` returns the analytic derivative of `beta_0(x)` with
-respect to the original input coordinates. The internal local-polynomial slope
-coefficients are not returned.
-
 ## Bandwidths
 
-Every estimator accepts either a fixed bandwidth or a method name:
-
-| Form | Meaning |
+| Specification | Meaning |
 | --- | --- |
-| `0.5` | One fixed bandwidth, expanded to every feature after fitting |
-| `[0.5, 1.0]` | One fixed bandwidth per feature |
-| `"scott"` | Scott rule-of-thumb bandwidth |
-| `"silverman"` | Silverman/IQR bandwidth |
+| `0.5` | Fixed isotropic bandwidth |
+| `[0.5, 1.0]` | Fixed per-feature bandwidths |
+| `"scott"` | Scott rule of thumb |
+| `"silverman"` | Robust Silverman/IQR rule |
 | `"median"` | Median pairwise-distance bandwidth |
 | `"mlcv"` | KDE maximum-likelihood cross-validation |
 | `"lscv"` | Regression least-squares cross-validation |
 | `"gcv"` | Regression generalized cross-validation |
-| `"aicc"` | Regression corrected AIC selection |
+| `"aicc"` | Regression corrected AIC |
 
-Rule-of-thumb methods can be multiplied by a scalar or per-feature scale:
+Rule-of-thumb methods accept a scalar or per-feature multiplier:
 
 ```python
-KernelDensity(bandwidth=("silverman", 0.5))
-KernelRegression(bandwidth=("scott", [0.8, 1.2]))
+KernelDensity(("silverman", 0.5))
+KernelRegression(("scott", [0.8, 1.2]))
 ```
 
-Cross-validation optimizes in log-bandwidth space around a Silverman initial
-value. Bandwidth selection is performed after whitening.
+Cross-validation searches in log-bandwidth space around a Silverman initial
+value after whitening the predictors.
 
-## Whitening and covariance modes
+## Whitening
 
-The `diag_cov` constructor flag controls the coordinate transform used before
-kernel evaluation:
+`diag_cov=True` standardizes each feature independently. The default
+`diag_cov=False` uses a Cholesky factor of the full sample covariance and
+preserves correlations in the Mahalanobis geometry.
 
-- `diag_cov=True`: divide each feature by its sample standard deviation.
-- `diag_cov=False`: use a Cholesky factor of the full sample covariance,
-  preserving correlations through a Mahalanobis geometry.
-
-The fitted model exposes `bandwidth`, `L`, `X`, `X_scaled`, `inv_bw`, and
-`normalizer` for inspection. `whiten_inverse_transform` maps whitened offsets
-back to original-coordinate offsets, which is useful when sampling around a
-fitted point.
-
-## Performance model
-
-KDE and NWR evaluate the kernel sums in Cython loops with the Python GIL
-released. Their direct evaluation cost is `O(m*n*d)` for `m` queries, `n`
-training samples, and `d` features. LLR accumulates a `(d + 1) × (d + 1)`
-local design matrix for each query and therefore has an additional quadratic
-dependence on `d`.
-
-The implementation is CPU-based and exact for the selected training set. It
-does not require CUDA or a system CUDA toolkit. For very large datasets,
-batching query points is recommended to bound temporary memory use.
-
-## Development
-
-From a checkout:
-
-```bash
-python -m pip install -e ".[dev]"
-python -m pytest -q
-python -m build
-```
-
-The Cython extensions are declared in `setup.py`; `MANIFEST.in` includes their
-`.pyx` sources so source distributions can be rebuilt. GitHub Actions uses
-`cibuildwheel` to build and test platform-specific wheels.
+Fitted models expose `bandwidth`, `L`, `X`, `X_scaled`, `inv_bw`, and
+`normalizer`. `whiten_inverse_transform` maps whitened offsets back to original
+coordinates.
 
 ## License
 
